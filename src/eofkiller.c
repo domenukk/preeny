@@ -5,7 +5,11 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
-#include "logging.h"
+#define preeny_info(x) fputs("PREENY: " x, stderr);
+
+// How many EOFs should occur before we kill the process
+static int eof_before_kill = 0;
+static int eof_counter = 0;
 
 #define HOOK_FN(ret, name, args...) typedef ret (* name##_t)(args); \
 ret name(args) { \
@@ -13,7 +17,7 @@ ret name(args) { \
 	if (!o_##name) \
 		o_##name = (name##_t) dlsym(RTLD_NEXT, #name); \
 	ret result = o_##name
-#define HOOK_END(cond) if (result cond && !isatty(fileno(stdin))) { \
+#define HOOK_END(cond) if (result cond && !isatty(fileno(stdin)) && eof_counter++ == eof_before_kill) { \
 	preeny_info("EOF, exiting."); \
 	exit(0); \
 } else return result; }
@@ -40,11 +44,11 @@ HOOK_END(<= 0 && fd == hook_fd);
 
 char scanf_eof_on_malformed;
 int handle_scanf_result(int result) {
-	if (result == EOF) {
+	if (result == EOF && eof_counter++ >= eof_before_kill) {
 		preeny_info("EOF, exiting.");
 		exit(0);
 	}
-	if (scanf_eof_on_malformed && !result) {
+	if (scanf_eof_on_malformed && !result && eof_counter++ >= eof_before_kill) {
 		preeny_info("Malformed scanf input, exiting.");
 		exit(0);
 	}
@@ -100,6 +104,10 @@ int __isoc99_fscanf(FILE *stream, const char *format, ...) {
 __attribute__((constructor))
 int main() {
 	scanf_eof_on_malformed = getenv("SCANF_EOF_ON_MALFORMED") != NULL;
+
+	if (getenv("EOF_BEFORE_KILL") != NULL) {
+		eof_before_kill = atoi(getenv("EOF_BEFORE_KILL"));
+	}
 
 	char *fd_str = getenv("EOF_HOOK_FD");
 	hook_fd = fd_str ? atoi(fd_str) : fileno(stdin);
